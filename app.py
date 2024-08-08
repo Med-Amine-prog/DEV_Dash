@@ -15,7 +15,7 @@ from constants import nationalities
 # Configuration pour accéder à Google Sheets
 def load_google_sheet(sheet_url):
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("gsheetsessai-2a767ebd96fc.json", scope)
+    creds = ServiceAccountCredentials.from_json_keyfile_name("gsheetsessai-83f42d3fc4c0.json", scope)
     client = gspread.authorize(creds)
 
     retries = 3
