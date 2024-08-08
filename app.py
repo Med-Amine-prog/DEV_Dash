@@ -1,5 +1,3 @@
-import os
-import json
 import streamlit as st
 import pandas as pd
 import gspread
@@ -8,31 +6,18 @@ import plotly.express as px
 import re
 import time
 from difflib import get_close_matches
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
+from Sauvegarde import create_db, load_dashboard_from_db, save_dashboard_to_db
+
 from constants import nationalities
 
 # Configuration pour accéder à Google Sheets
 def load_google_sheet(sheet_url):
-    # Charger les identifiants de Google depuis la variable d'environnement
-    def load_google_credentials():
-        # Lire la variable d'environnement
-        credentials_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
-
-        if not credentials_json:
-            raise ValueError("La variable d'environnement 'GOOGLE_CREDENTIALS_JSON' n'est pas définie.")
-
-        # Convertir la chaîne JSON en dictionnaire Python
-        credentials_dict = json.loads(credentials_json)
-
-        # Créer les identifiants à partir du dictionnaire
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict)
-
-        return creds
-
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = load_google_credentials()  # Obtenez les identifiants en utilisant la fonction modifiée
+    creds = ServiceAccountCredentials.from_json_keyfile_name("gsheetsessai-2a767ebd96fc.json", scope)
     client = gspread.authorize(creds)
 
-    # Retry logic
     retries = 3
     for i in range(retries):
         try:
@@ -40,34 +25,28 @@ def load_google_sheet(sheet_url):
             data = sheet.get_all_records()
             df = pd.DataFrame(data)
 
-            # Nettoyer les noms de colonnes
             df.columns = clean_column_names(df.columns)
             return df
         except gspread.exceptions.APIError as e:
             st.warning(f"Tentative {i+1} échouée: {e}")
-            if i < retries - 1:  # No delay after the last attempt
-                time.sleep(2)  # Wait for 2 seconds before retrying
+            if i < retries - 1:
+                time.sleep(2)
 
     st.error("Impossible de charger les données après plusieurs tentatives.")
     return None
 
 def clean_column_names(columns):
-    # Fonction pour nettoyer les noms de colonnes en supprimant les caractères spéciaux
     return [re.sub(r'[^\w\s]', '', col) for col in columns]
 
-# Fonction pour normaliser les nationalités
 def normalize_nationality(nationality, nationalities):
-    # Trouver la nationalité la plus proche dans la liste
     matches = get_close_matches(nationality, nationalities, n=1, cutoff=0.6)
     if matches:
         return matches[0]
     else:
         return nationality
 
-# Fonction pour créer une carte choropleth
 def make_choropleth(input_df, input_column, input_color_theme):
     if input_column in input_df.columns:
-        # Filtrer les valeurs NA avant de compter les nationalités
         nationality_counts = input_df[input_column].dropna().value_counts().reset_index()
         nationality_counts.columns = ['Nationalité', 'Count']
 
@@ -94,9 +73,45 @@ def make_choropleth(input_df, input_column, input_color_theme):
         st.error(f"La colonne '{input_column}' n'existe pas dans les données.")
         return None
 
-# Fonction pour créer un graphique
-def create_graph(df, selected_column, graph_type, container):
-    # Filtrer les valeurs NA avant de créer les graphiques
+@st.cache_resource
+def load_model_and_tokenizer():
+    tokenizer = AutoTokenizer.from_pretrained('nlptown/bert-base-multilingual-uncased-sentiment')
+    model = AutoModelForSequenceClassification.from_pretrained('nlptown/bert-base-multilingual-uncased-sentiment')
+    return tokenizer, model
+
+def sentiment_analysis(texts):
+    tokenizer, model = load_model_and_tokenizer()
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
+
+    sentiments = ['Très négatif', 'Négatif', 'Neutre', 'Positif', 'Très positif']
+
+    inputs = tokenizer(texts, return_tensors='pt', padding=True, truncation=True)
+    inputs = {key: value.to(device) for key, value in inputs.items()}
+
+    with torch.no_grad():
+        outputs = model(**inputs)
+    
+    probabilities = torch.nn.functional.softmax(outputs.logits, dim=-1)
+    predicted_classes = torch.argmax(probabilities, dim=-1)
+
+    sentiment_results = [sentiments[class_idx] for class_idx in predicted_classes]
+
+    return sentiment_results, probabilities
+
+def create_combined_sentiment_graph(df, sentiment_column, second_column):
+    sentiment_results, probabilities = sentiment_analysis(df[sentiment_column].fillna('').tolist())
+    df['Sentiment'] = sentiment_results
+
+    combined_distribution = df.groupby(['Sentiment', second_column]).size().reset_index(name='Count')
+
+    fig = px.bar(combined_distribution, x='Sentiment', y='Count', color=second_column, 
+                 title=f"Répartition de {second_column} par Sentiment", barmode='group')
+
+    st.plotly_chart(fig)
+
+def create_graph(df, selected_column, graph_type, container, second_column=None):
     filtered_df = df[selected_column].replace('', pd.NA).dropna()
 
     with container:
@@ -107,28 +122,32 @@ def create_graph(df, selected_column, graph_type, container):
         elif graph_type == "Area":
             st.area_chart(filtered_df.value_counts().sort_index())
         elif graph_type == "Pie":
-            # Utilisation de Plotly pour le graphique circulaire
             fig = px.pie(filtered_df, names=selected_column, title=f"Pie Chart of {selected_column}")
             st.plotly_chart(fig)
         elif graph_type == "Histogram":
-            # Utilisation de Plotly pour le histogramme
             fig = px.histogram(filtered_df, x=selected_column, title=f"Histogram of {selected_column}")
             st.plotly_chart(fig)
         elif graph_type == "Map":
             fig = make_choropleth(df, selected_column, 'Viridis')
             st.plotly_chart(fig, use_container_width=True)
+        elif graph_type == "Sentitment Analyser":
+            # Utiliser le graphique combiné si second_column est fourni
+            if second_column:
+                create_combined_sentiment_graph(df, selected_column, second_column)
+            else:
+                sentiment_results, probabilities = sentiment_analysis(df[selected_column].fillna('').tolist())
+                df['Sentiment'] = sentiment_results
 
-# Interface utilisateur Streamlit
 def main():
-    st.set_page_config(layout="wide")  # Mettre en mode "large"
+    st.set_page_config(layout="wide")
 
-    st.title("Analyse des données des start-ups")
+    st.title("Analyse des données des participants")
 
-    # Initialise une liste vide pour stocker les graphiques ajoutés
     if "dashboard" not in st.session_state:
         st.session_state.dashboard = []
 
-    # Entrée de l'utilisateur pour l'URL de la feuille Google
+    create_db()  # Assurez-vous que la base de données et la table sont créées
+
     sheet_url = st.text_input("Entrez le lien de votre Google Sheet", "")
 
     if sheet_url:
@@ -138,53 +157,60 @@ def main():
                 st.success("Données chargées avec succès !")
                 st.write(df.head())
 
-                # Sélection des colonnes
                 columns = df.columns.tolist()
-                selected_column = st.selectbox("Choisissez une colonne à visualiser", columns)
 
-                # Appliquer la normalisation des nationalités si applicable
-                if selected_column in columns:
-                    df[selected_column] = df[selected_column].apply(lambda x: normalize_nationality(str(x), nationalities))
+                graph_type = st.selectbox("Choisissez un type de graphique", ["Bar", "Line", "Area", "Pie", "Histogram", "Map", "Sentitment Analyser"])
 
-                # Proposer des types de graphiques
-                graph_type = st.selectbox("Choisissez un type de graphique", ["Bar", "Line", "Area", "Pie", "Histogram", "Map"])
-
-                # Utiliser un conteneur vide pour le graphique temporaire
                 temp_container = st.empty()
 
-                # Générer le graphique temporaire selon le choix de l'utilisateur
-                if selected_column and graph_type:
-                    create_graph(df, selected_column, graph_type, temp_container)
+                # Partie où l'utilisateur choisit les colonnes et ajoute le graphique au tableau de bord
+                if graph_type:
+                    if graph_type == "Sentitment Analyser":
+                        # Utiliser directement la colonne sélectionnée pour l'analyse des sentiments
+                        sentiment_column = st.selectbox("Choisissez une colonne pour l'analyse des sentiments", columns)
+                        second_column = st.selectbox("Choisissez une deuxième colonne à visualiser", columns)
+                        if sentiment_column and second_column:
+                            create_combined_sentiment_graph(df, sentiment_column, second_column)
 
-                    # Bouton pour ajouter le graphique au tableau de bord
-                    if st.button("Ajouter au Tableau de Bord"):
-                        # Ajouter le type de graphique et la colonne choisie à la session
-                        st.session_state.dashboard.append((selected_column, graph_type))
-                        st.success("Graphique ajouté au tableau de bord !")
-                        # Effacer le graphique temporaire après l'ajout
-                        temp_container.empty()
+                            # Bouton pour ajouter le graphique au tableau de bord
+                            if st.button("Ajouter au Tableau de Bord"):
+                                st.session_state.dashboard.append((sentiment_column, graph_type, second_column))
+                                st.success("Graphique ajouté au tableau de bord !")
+                                temp_container.empty()
+                    else:
+                        selected_column = st.selectbox("Choisissez une colonne à visualiser", columns)
+                        create_graph(df, selected_column, graph_type, temp_container)
+
+                        if st.button("Ajouter au Tableau de Bord"):
+                            st.session_state.dashboard.append((selected_column, graph_type, None))  # None pour second_column ici
+                            st.success("Graphique ajouté au tableau de bord !")
+                            temp_container.empty()
 
         except Exception as e:
             st.error("Erreur lors du chargement des données: " + str(e))
 
-    # Afficher le tableau de bord avec les graphiques ajoutés
     st.header("Tableau de Bord Personnalisé")
 
-    # Boucle pour afficher chaque graphique ajouté en deux colonnes
-    for index, (column, graph) in enumerate(st.session_state.dashboard):
+    for index, (column, graph, second_column) in enumerate(st.session_state.dashboard):
         if index % 2 == 0:
             col1, col2 = st.columns(2)
         
         with (col1 if index % 2 == 0 else col2):
             st.subheader(f"{graph} Graphe pour : {column}")
-            # Créer un nouveau conteneur pour chaque graphique du tableau de bord
-            create_graph(df, column, graph, st.container())
+            create_graph(df, column, graph, st.container(), second_column)
 
-            # Bouton pour supprimer le graphique
             if st.button("Supprimer", key=f"delete-{index}"):
-                # Supprimer le graphique du tableau de bord
                 st.session_state.dashboard.pop(index)
                 st.experimental_rerun()
+
+    # Boutons pour sauvegarder et charger le tableau de bord
+    if st.button("Sauvegarder le Tableau de Bord"):
+        save_dashboard_to_db()
+        st.success("Tableau de Bord sauvegardé dans la base de données !")
+
+    if st.button("Charger le Tableau de Bord"):
+        load_dashboard_from_db()
+        st.success("Tableau de Bord chargé depuis la base de données !")
 
 if __name__ == "__main__":
     main()
