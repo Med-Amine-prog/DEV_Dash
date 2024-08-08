@@ -1,3 +1,5 @@
+import os
+import json
 import streamlit as st
 import pandas as pd
 import gspread
@@ -14,8 +16,23 @@ from constants import nationalities
 
 # Configuration pour accéder à Google Sheets
 def load_google_sheet(sheet_url):
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("gsheetsessai-83f42d3fc4c0.json", scope)
+    # Charger les identifiants de Google depuis la variable d'environnement
+    def load_google_credentials():
+        # Lire la variable d'environnement
+        credentials_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+
+        if not credentials_json:
+            raise ValueError("La variable d'environnement 'GOOGLE_CREDENTIALS_JSON' n'est pas définie.")
+
+        # Convertir la chaîne JSON en dictionnaire Python
+        credentials_dict = json.loads(credentials_json)
+
+        # Créer les identifiants à partir du dictionnaire
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict)
+
+        return creds
+    
+    creds = load_google_credentials()  # Obtenez les identifiants en utilisant la fonction modifiée
     client = gspread.authorize(creds)
 
     retries = 3
