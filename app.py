@@ -15,7 +15,7 @@ from constants import nationalities
 # Configuration pour accéder à Google Sheets
 def load_google_sheet(sheet_url):
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("gsheetsessai-2a767ebd96fc.json", scope)
+    creds = ServiceAccountCredentials.from_json_keyfile_name("gsheetsessai-83f42d3fc4c0.json", scope)
     client = gspread.authorize(creds)
 
     retries = 3
@@ -158,6 +158,15 @@ def main():
                 st.write(df.head())
 
                 columns = df.columns.tolist()
+
+                # Option pour choisir la colonne pour compter
+                count_column = st.selectbox("Choisissez une colonne pour compter les occurrences", columns)
+
+                # Bouton pour compter les occurrences
+                if st.button("Compter les occurrences"):
+                    count_result = df[count_column].value_counts()
+                    st.write(f"Occurrences dans la colonne {count_column}:")
+                    st.write(count_result)
 
                 graph_type = st.selectbox("Choisissez un type de graphique", ["Bar", "Line", "Area", "Pie", "Histogram", "Map", "Sentitment Analyser"])
 
