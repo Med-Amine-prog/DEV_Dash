@@ -1,4 +1,3 @@
-import os
 import json
 import streamlit as st
 import pandas as pd
@@ -18,14 +17,8 @@ from constants import nationalities
 def load_google_sheet(sheet_url):
     # Charger les identifiants de Google depuis la variable d'environnement
     def load_google_credentials():
-        # Lire la variable d'environnement
-        credentials_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
-
-        if not credentials_json:
-            raise ValueError("La variable d'environnement 'GOOGLE_CREDENTIALS_JSON' n'est pas définie.")
-
-        # Convertir la chaîne JSON en dictionnaire Python
-        credentials_dict = json.loads(credentials_json)
+        # Charger les identifiants Google depuis Streamlit Secrets
+        credentials_dict = dict(st.secrets["GOOGLE_CREDENTIALS_JSON"])
 
         # Créer les identifiants à partir du dictionnaire
         creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict)
