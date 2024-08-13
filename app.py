@@ -12,10 +12,27 @@ from Sauvegarde import create_db, load_dashboard_from_db, save_dashboard_to_db
 
 from constants import nationalities
 
+# --- PAGE CONFIG ---
+st.set_page_config(
+    page_title="DEV Dashboard",
+    page_icon="logo_dev.jpg",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 # Configuration pour accéder à Google Sheets
 def load_google_sheet(sheet_url):
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("gsheetsessai-83f42d3fc4c0.json", scope)
+    # Charger les identifiants de Google depuis la variable d'environnement
+    def load_google_credentials():
+        # Charger les identifiants Google depuis Streamlit Secrets
+        credentials_dict = dict(st.secrets["GOOGLE_CREDENTIALS_JSON"])
+
+        # Créer les identifiants à partir du dictionnaire
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict)
+
+        return creds
+    
+    creds = load_google_credentials()  # Obtenez les identifiants en utilisant la fonction modifiée
     client = gspread.authorize(creds)
 
     retries = 3
@@ -139,7 +156,7 @@ def create_graph(df, selected_column, graph_type, container, second_column=None)
                 df['Sentiment'] = sentiment_results
 
 def main():
-    st.set_page_config(layout="wide")
+    # st.set_page_config(layout="wide") # Remove this line
 
     st.title("Analyse des données des participants")
 
@@ -166,7 +183,23 @@ def main():
                 if st.button("Compter les occurrences"):
                     count_result = df[count_column].value_counts()
                     st.write(f"Occurrences dans la colonne {count_column}:")
-                    st.write(count_result)
+
+                    # Diviser les résultats en groupes pour affichage horizontal
+                    count_keys = list(count_result.keys())
+                    num_groups = len(count_keys)
+                    cols = st.columns(2)
+                    
+                    for i in range(num_groups):
+                        with cols[i % 2] :
+                            key = count_keys[i]
+                            value = count_result[key]
+                            st.write(f"{key}: {value}")
+                    
+                        if st.button(f"Ajouter {key} au Tableau de Bord", key=f"add-{key}"):
+                            st.session_state.dashboard.append((count_column, 'Count', key))
+                            st.success("Les valeurs sont ajoutées au tableau de bord !")
+                            temp_container.empty()
+
 
                 graph_type = st.selectbox("Choisissez un type de graphique", ["Bar", "Line", "Area", "Pie", "Histogram", "Map", "Sentitment Analyser"])
 
@@ -200,7 +233,9 @@ def main():
 
     st.header("Tableau de Bord Personnalisé")
 
-    for index, (column, graph, second_column) in enumerate(st.session_state.dashboard):
+########################################################
+
+    for index, (column, graph, second_column, count_column, key) in enumerate(st.session_state.dashboard):
         if index % 2 == 0:
             col1, col2 = st.columns(2)
         
