@@ -22,17 +22,8 @@ st.set_page_config(
 
 # Configuration pour accéder à Google Sheets
 def load_google_sheet(sheet_url):
-    # Charger les identifiants de Google depuis la variable d'environnement
-    def load_google_credentials():
-        # Charger les identifiants Google depuis Streamlit Secrets
-        credentials_dict = dict(st.secrets["GOOGLE_CREDENTIALS_JSON"])
-
-        # Créer les identifiants à partir du dictionnaire
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict)
-
-        return creds
-    
-    creds = load_google_credentials()  # Obtenez les identifiants en utilisant la fonction modifiée
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("gsheetsessai-83f42d3fc4c0.json", scope)
     client = gspread.authorize(creds)
 
     retries = 3
@@ -55,12 +46,16 @@ def load_google_sheet(sheet_url):
 def clean_column_names(columns):
     return [re.sub(r'[^\w\s]', '', col) for col in columns]
 
+############################################################
+
 def normalize_nationality(nationality, nationalities):
     matches = get_close_matches(nationality, nationalities, n=1, cutoff=0.6)
     if matches:
         return matches[0]
     else:
         return nationality
+
+############################################################
 
 def make_choropleth(input_df, input_column, input_color_theme):
     if input_column in input_df.columns:
@@ -165,7 +160,7 @@ def main():
 
     create_db()  # Assurez-vous que la base de données et la table sont créées
 
-    sheet_url = st.text_input("Entrez le lien de votre Google Sheet", "")
+    sheet_url = st.sidebar.text_input("Entrez le lien de votre Google Sheet", "")
 
     if sheet_url:
         try:
@@ -177,12 +172,12 @@ def main():
                 columns = df.columns.tolist()
 
                 # Option pour choisir la colonne pour compter
-                count_column = st.selectbox("Choisissez une colonne pour compter les occurrences", columns)
+                count_column = st.sidebar.selectbox("Choisissez une colonne pour compter les occurrences", columns)
 
                 # Bouton pour compter les occurrences
-                if st.button("Compter les occurrences"):
+                if st.sidebar.button("Compter les occurrences"):
                     count_result = df[count_column].value_counts()
-                    st.write(f"Occurrences dans la colonne {count_column}:")
+                    st.write(f"Occurrences dans la colonne \"{count_column}\":")
 
                     # Diviser les résultats en groupes pour affichage horizontal
                     count_keys = list(count_result.keys())
@@ -190,18 +185,17 @@ def main():
                     cols = st.columns(2)
                     
                     for i in range(num_groups):
-                        with cols[i % 2] :
+                        with cols[i % 2]:
                             key = count_keys[i]
                             value = count_result[key]
                             st.write(f"{key}: {value}")
                     
-                        if st.button(f"Ajouter {key} au Tableau de Bord", key=f"add-{key}"):
+                        if st.sidebar.button(f"Ajouter {key} au Tableau de Bord", key=f"add-{key}"):
                             st.session_state.dashboard.append((count_column, 'Count', key))
                             st.success("Les valeurs sont ajoutées au tableau de bord !")
                             temp_container.empty()
 
-
-                graph_type = st.selectbox("Choisissez un type de graphique", ["Bar", "Line", "Area", "Pie", "Histogram", "Map", "Sentitment Analyser"])
+                graph_type = st.sidebar.selectbox("Choisissez un type de graphique", ["Bar", "Line", "Area", "Pie", "Histogram", "Map", "Sentitment Analyser"])
 
                 temp_container = st.empty()
 
@@ -209,21 +203,21 @@ def main():
                 if graph_type:
                     if graph_type == "Sentitment Analyser":
                         # Utiliser directement la colonne sélectionnée pour l'analyse des sentiments
-                        sentiment_column = st.selectbox("Choisissez une colonne pour l'analyse des sentiments", columns)
-                        second_column = st.selectbox("Choisissez une deuxième colonne à visualiser", columns)
+                        sentiment_column = st.sidebar.selectbox("Choisissez une colonne pour l'analyse des sentiments", columns)
+                        second_column = st.sidebar.selectbox("Choisissez une deuxième colonne à visualiser", columns)
                         if sentiment_column and second_column:
                             create_combined_sentiment_graph(df, sentiment_column, second_column)
 
                             # Bouton pour ajouter le graphique au tableau de bord
-                            if st.button("Ajouter au Tableau de Bord"):
+                            if st.sidebar.button("Ajouter au Tableau de Bord"):
                                 st.session_state.dashboard.append((sentiment_column, graph_type, second_column))
                                 st.success("Graphique ajouté au tableau de bord !")
                                 temp_container.empty()
                     else:
-                        selected_column = st.selectbox("Choisissez une colonne à visualiser", columns)
+                        selected_column = st.sidebar.selectbox("Choisissez une colonne à visualiser", columns)
                         create_graph(df, selected_column, graph_type, temp_container)
 
-                        if st.button("Ajouter au Tableau de Bord"):
+                        if st.sidebar.button("Ajouter au Tableau de Bord"):
                             st.session_state.dashboard.append((selected_column, graph_type, None))  # None pour second_column ici
                             st.success("Graphique ajouté au tableau de bord !")
                             temp_container.empty()
@@ -235,7 +229,7 @@ def main():
 
 ########################################################
 
-    for index, (column, graph, second_column, count_column, key) in enumerate(st.session_state.dashboard):
+    for index, (column, graph, second_column) in enumerate(st.session_state.dashboard):
         if index % 2 == 0:
             col1, col2 = st.columns(2)
         
@@ -248,11 +242,11 @@ def main():
                 st.experimental_rerun()
 
     # Boutons pour sauvegarder et charger le tableau de bord
-    if st.button("Sauvegarder le Tableau de Bord"):
+    if st.sidebar.button("Sauvegarder le Tableau de Bord"):
         save_dashboard_to_db()
         st.success("Tableau de Bord sauvegardé dans la base de données !")
 
-    if st.button("Charger le Tableau de Bord"):
+    if st.sidebar.button("Charger le Tableau de Bord"):
         load_dashboard_from_db()
         st.success("Tableau de Bord chargé depuis la base de données !")
 
