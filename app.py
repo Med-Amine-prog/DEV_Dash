@@ -171,29 +171,6 @@ def main():
 
                 columns = df.columns.tolist()
 
-                # Option pour choisir la colonne pour compter
-                count_column = st.sidebar.selectbox("Choisissez une colonne pour compter les occurrences", columns)
-
-                # Bouton pour compter les occurrences
-                if st.sidebar.button("Compter les occurrences"):
-                    count_result = df[count_column].value_counts()
-                    st.write(f"Occurrences dans la colonne \"{count_column}\":")
-
-                    # Diviser les résultats en groupes pour affichage horizontal
-                    count_keys = list(count_result.keys())
-                    num_groups = len(count_keys)
-                    cols = st.columns(2)
-                    
-                    for i in range(num_groups):
-                        with cols[i % 2]:
-                            key = count_keys[i]
-                            value = count_result[key]
-                            st.write(f"{key}: {value}")
-                    
-                        if st.sidebar.button(f"Ajouter {key} au Tableau de Bord", key=f"add-{key}"):
-                            st.session_state.dashboard.append((count_column, 'Count', key))
-                            st.success("Les valeurs sont ajoutées au tableau de bord !")
-                            temp_container.empty()
 
                 graph_type = st.sidebar.selectbox("Choisissez un type de graphique", ["Bar", "Line", "Area", "Pie", "Histogram", "Map", "Sentitment Analyser"])
 
