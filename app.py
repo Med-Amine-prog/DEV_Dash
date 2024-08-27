@@ -15,7 +15,7 @@ from constants import nationalities
 # --- PAGE CONFIG ---
 st.set_page_config(
     page_title="DEV Dashboard",
-    page_icon="logo_dev.jpg",
+    page_icon="logo.svg",
     layout="wide",
     initial_sidebar_state="expanded"
 )
