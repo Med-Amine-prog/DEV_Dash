@@ -23,8 +23,22 @@ st.set_page_config(
 
 # Configuration pour accéder à Google Sheets
 def load_google_sheet(sheet_url):
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("gsheetsessai-83f42d3fc4c0.json", scope)
+
+    # scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    # creds = ServiceAccountCredentials.from_json_keyfile_name("gsheetsessai-83f42d3fc4c0.json", scope)
+    # client = gspread.authorize(creds)
+
+    # Charger les identifiants de Google depuis la variable d'environnement
+    def load_google_credentials():
+        # Charger les identifiants Google depuis Streamlit Secrets
+        credentials_dict = dict(st.secrets["GOOGLE_CREDENTIALS_JSON"])
+
+        # Créer les identifiants à partir du dictionnaire
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict)
+
+        return creds
+    
+    creds = load_google_credentials()  # Obtenez les identifiants en utilisant la fonction modifiée
     client = gspread.authorize(creds)
 
     retries = 3
