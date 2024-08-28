@@ -6,8 +6,9 @@ import plotly.express as px
 import re
 import time
 from difflib import get_close_matches
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModel
 import torch
+from sklearn.metrics.pairwise import cosine_similarity
 from Sauvegarde import create_db, load_dashboard_from_db, save_dashboard_to_db
 
 from constants import nationalities
@@ -34,6 +35,13 @@ def load_google_sheet(sheet_url):
             df = pd.DataFrame(data)
 
             df.columns = clean_column_names(df.columns)
+
+            # Remplacer les chaînes vides par NaN
+            df.replace('', pd.NA, inplace=True)
+
+            # Supprimer les colonnes entièrement vides
+            df.dropna(axis=1, how='all', inplace=True)
+
             return df
         except gspread.exceptions.APIError as e:
             st.warning(f"Tentative {i+1} échouée: {e}")
@@ -43,8 +51,49 @@ def load_google_sheet(sheet_url):
     st.error("Impossible de charger les données après plusieurs tentatives.")
     return None
 
+def load_multiple_sheets(sheet_urls):
+    all_dfs = []
+    for url in sheet_urls:
+        url = url.strip()  # Nettoyer les espaces autour de l'URL
+        if not url:
+            continue  # Ignorer les URLs vides
+        
+        try:
+            df = load_google_sheet(url)
+            if df is not None:
+                all_dfs.append(df)
+        except Exception as e:
+            st.warning(f"Erreur lors du chargement de la feuille à l'URL {url}: {e}")
+    
+    if all_dfs:
+        combined_df = pd.concat(all_dfs, ignore_index=True)
+        
+        return combined_df
+    else:
+        st.error("Aucune donnée à fusionner.")
+        return None
+
 def clean_column_names(columns):
-    return [re.sub(r'[^\w\s]', '', col) for col in columns]
+    return [re.sub(r'[^\w\s]', '', col).strip().lower() for col in columns]
+
+
+def get_column_embedding(column_name, tokenizer, model):
+    inputs = tokenizer(column_name, return_tensors='pt', truncation=True, padding=True)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    return outputs.last_hidden_state.mean(dim=1).numpy()
+
+def find_similar_columns(columns1, columns2, tokenizer, model, threshold=0.8):
+    similarities = []
+    for col1 in columns1:
+        embedding1 = get_column_embedding(col1, tokenizer, model)
+        for col2 in columns2:
+            embedding2 = get_column_embedding(col2, tokenizer, model)
+            similarity = cosine_similarity(embedding1, embedding2)[0][0]
+            if similarity > threshold:
+                st.write(f"Colonnes similaires trouvées: {col1} et {col2} avec une similarité de {similarity}")
+                similarities.append((col1, col2, similarity))
+    return similarities
 
 ############################################################
 
@@ -87,8 +136,8 @@ def make_choropleth(input_df, input_column, input_color_theme):
 
 @st.cache_resource
 def load_model_and_tokenizer():
-    tokenizer = AutoTokenizer.from_pretrained('nlptown/bert-base-multilingual-uncased-sentiment')
-    model = AutoModelForSequenceClassification.from_pretrained('nlptown/bert-base-multilingual-uncased-sentiment')
+    tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+    model = AutoModel.from_pretrained('bert-base-uncased')
     return tokenizer, model
 
 def sentiment_analysis(texts):
@@ -105,7 +154,7 @@ def sentiment_analysis(texts):
     with torch.no_grad():
         outputs = model(**inputs)
     
-    probabilities = torch.nn.functional.softmax(outputs.logits, dim=-1)
+    probabilities = torch.nn.functional.softmax(outputs.last_hidden_state[:, 0, :], dim=-1)
     predicted_classes = torch.argmax(probabilities, dim=-1)
 
     sentiment_results = [sentiments[class_idx] for class_idx in predicted_classes]
@@ -143,7 +192,6 @@ def create_graph(df, selected_column, graph_type, container, second_column=None)
             fig = make_choropleth(df, selected_column, 'Viridis')
             st.plotly_chart(fig, use_container_width=True)
         elif graph_type == "Sentitment Analyser":
-            # Utiliser le graphique combiné si second_column est fourni
             if second_column:
                 create_combined_sentiment_graph(df, selected_column, second_column)
             else:
@@ -151,60 +199,66 @@ def create_graph(df, selected_column, graph_type, container, second_column=None)
                 df['Sentiment'] = sentiment_results
 
 def main():
-    # st.set_page_config(layout="wide") # Remove this line
-
-    st.title("Analyse des données des participants")
+    st.title("DEV Dashboard App")
 
     if "dashboard" not in st.session_state:
         st.session_state.dashboard = []
 
-    create_db()  # Assurez-vous que la base de données et la table sont créées
+    if "combined_df" not in st.session_state:
+        st.session_state.combined_df = None  # Initialiser avec None
 
-    sheet_url = st.sidebar.text_input("Entrez le lien de votre Google Sheet", "")
+    st.sidebar.header("Ajouter des Feuilles Google")
 
-    if sheet_url:
-        try:
-            df = load_google_sheet(sheet_url)
-            if df is not None:
-                st.success("Données chargées avec succès !")
-                st.write(df.head())
+    num_links = st.sidebar.number_input("Nombre de liens à ajouter", min_value=1, max_value=10, value=1)
+    sheet_urls = [st.sidebar.text_input(f"URL de la feuille {i+1}") for i in range(num_links)]
 
-                columns = df.columns.tolist()
+    if st.sidebar.button("Charger et Combiner les Données"):
+        combined_df = load_multiple_sheets(sheet_urls)
+        if combined_df is not None:
+            st.session_state.combined_df = combined_df  # Stocker le DataFrame dans st.session_state
+        else:
+            st.error("Aucune donnée combinée disponible pour l'affichage.")
+            return
 
+    if st.session_state.combined_df is not None:
+        combined_df = st.session_state.combined_df  # Récupérer le DataFrame de st.session_state
+        st.write("DataFrame combiné:")
+        st.write(combined_df)
 
-                graph_type = st.sidebar.selectbox("Choisissez un type de graphique", ["Bar", "Line", "Area", "Pie", "Histogram", "Map", "Sentitment Analyser"])
+        columns = combined_df.columns.tolist()
+        
+        if len(columns) == 0:
+            st.error("Aucune colonne disponible pour l'affichage.")
+            return
+        
+        graph_type = st.sidebar.selectbox("Choisissez un type de graphique", ["Bar", "Line", "Area", "Pie", "Histogram", "Map", "Sentitment Analyser"])
 
-                temp_container = st.empty()
+        temp_container = st.empty()
 
-                # Partie où l'utilisateur choisit les colonnes et ajoute le graphique au tableau de bord
-                if graph_type:
-                    if graph_type == "Sentitment Analyser":
-                        # Utiliser directement la colonne sélectionnée pour l'analyse des sentiments
-                        sentiment_column = st.sidebar.selectbox("Choisissez une colonne pour l'analyse des sentiments", columns)
-                        second_column = st.sidebar.selectbox("Choisissez une deuxième colonne à visualiser", columns)
-                        if sentiment_column and second_column:
-                            create_combined_sentiment_graph(df, sentiment_column, second_column)
+        if graph_type:
+            if graph_type == "Sentitment Analyser":
+                sentiment_column = st.sidebar.selectbox("Choisissez une colonne pour l'analyse des sentiments", columns)
+                second_column = st.sidebar.selectbox("Choisissez une deuxième colonne à visualiser", columns)
+                if sentiment_column and second_column:
+                    create_combined_sentiment_graph(combined_df, sentiment_column, second_column)
 
-                            # Bouton pour ajouter le graphique au tableau de bord
-                            if st.sidebar.button("Ajouter au Tableau de Bord"):
-                                st.session_state.dashboard.append((sentiment_column, graph_type, second_column))
-                                st.success("Graphique ajouté au tableau de bord !")
-                                temp_container.empty()
-                    else:
-                        selected_column = st.sidebar.selectbox("Choisissez une colonne à visualiser", columns)
-                        create_graph(df, selected_column, graph_type, temp_container)
+                    if st.sidebar.button("Ajouter au Tableau de Bord"):
+                        st.session_state.dashboard.append((sentiment_column, graph_type, second_column))
+                        st.success("Graphique ajouté au tableau de bord !")
+                        temp_container.empty()
+            else:
+                selected_column = st.sidebar.selectbox("Choisissez une colonne à visualiser", columns)
+                if selected_column:  # Vérifier si une colonne a été sélectionnée
+                    create_graph(combined_df, selected_column, graph_type, temp_container)
 
-                        if st.sidebar.button("Ajouter au Tableau de Bord"):
-                            st.session_state.dashboard.append((selected_column, graph_type, None))  # None pour second_column ici
-                            st.success("Graphique ajouté au tableau de bord !")
-                            temp_container.empty()
-
-        except Exception as e:
-            st.error("Erreur lors du chargement des données: " + str(e))
+                    if st.sidebar.button("Ajouter au Tableau de Bord"):
+                        st.session_state.dashboard.append((selected_column, graph_type, None))
+                        st.success("Graphique ajouté au tableau de bord !")
+                        temp_container.empty()
+                else:
+                    st.error("Veuillez sélectionner une colonne pour créer un graphique.")
 
     st.header("Tableau de Bord Personnalisé")
-
-########################################################
 
     for index, (column, graph, second_column) in enumerate(st.session_state.dashboard):
         if index % 2 == 0:
@@ -212,13 +266,15 @@ def main():
         
         with (col1 if index % 2 == 0 else col2):
             st.subheader(f"{graph} Graphe pour : {column}")
-            create_graph(df, column, graph, st.container(), second_column)
+            if st.session_state.combined_df is not None and column in st.session_state.combined_df.columns:
+                create_graph(st.session_state.combined_df, column, graph, st.container(), second_column)
+            else:
+                st.error(f"Impossible de créer le graphique pour la colonne '{column}'.")
 
             if st.button("Supprimer", key=f"delete-{index}"):
                 st.session_state.dashboard.pop(index)
                 st.experimental_rerun()
 
-    # Boutons pour sauvegarder et charger le tableau de bord
     if st.sidebar.button("Sauvegarder le Tableau de Bord"):
         save_dashboard_to_db()
         st.success("Tableau de Bord sauvegardé dans la base de données !")
